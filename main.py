@@ -23,8 +23,11 @@ DB_NAME = "tasks.db"
 
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
+        # ❗ ВАЖНО: пересоздаём таблицу (фикс ошибки status)
+        await db.execute("DROP TABLE IF EXISTS tasks")
+
         await db.execute("""
-        CREATE TABLE IF NOT EXISTS tasks (
+        CREATE TABLE tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id INTEGER,
             task_text TEXT,
@@ -55,20 +58,18 @@ async def get_active_tasks():
         return await cursor.fetchall()
 
 
+async def get_all_tasks():
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT * FROM tasks")
+        return await cursor.fetchall()
+
+
 async def update_status(task_id, status):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("""
         UPDATE tasks SET status = ? WHERE id = ?
         """, (status, task_id))
         await db.commit()
-
-
-async def get_all_tasks():
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("""
-        SELECT * FROM tasks
-        """)
-        return await cursor.fetchall()
 
 
 async def mark_notified(task_id, field):
@@ -99,6 +100,7 @@ def parse_task(text):
 @dp.message()
 async def handler(message: types.Message):
     text = message.text
+
     if not text:
         return
 
@@ -119,16 +121,22 @@ async def handler(message: types.Message):
 
     # --- выполнить ---
     if text.startswith("/done"):
-        task_id = int(text.split()[1])
-        await update_status(task_id, "done")
-        await message.answer("✅ Задача выполнена")
+        try:
+            task_id = int(text.split()[1])
+            await update_status(task_id, "done")
+            await message.answer("✅ Задача выполнена")
+        except:
+            await message.answer("❌ Неверный формат. Пример: /done 1")
         return
 
     # --- отменить ---
     if text.startswith("/cancel"):
-        task_id = int(text.split()[1])
-        await update_status(task_id, "cancelled")
-        await message.answer("❌ Задача отменена")
+        try:
+            task_id = int(text.split()[1])
+            await update_status(task_id, "cancelled")
+            await message.answer("❌ Задача отменена")
+        except:
+            await message.answer("❌ Неверный формат. Пример: /cancel 1")
         return
 
     # --- создание задачи ---
@@ -136,7 +144,7 @@ async def handler(message: types.Message):
         task_text, executor, deadline = parse_task(text)
 
         if not deadline:
-            await message.answer("❌ Неверный формат даты")
+            await message.answer("❌ Укажи дату в формате 20.05.2026 14:00")
             return
 
         await add_task(message.chat.id, task_text, executor, deadline)
@@ -172,22 +180,24 @@ async def check_tasks():
 
         diff = deadline - now
 
-        # --- EXPIRED ---
+        # --- просрочено ---
         if now > deadline:
             await update_status(task_id, "expired")
             await bot.send_message(chat_id, f"⚠️ Задача просрочена:\n{task_text}")
             continue
 
-        # --- 24h ---
+        # --- 24 часа ---
         if diff <= timedelta(hours=24) and t[6] == 0:
-            await bot.send_message(chat_id,
+            await bot.send_message(
+                chat_id,
                 f"⏰ 24 часа до дедлайна\n{task_text}\n{executor}"
             )
             await mark_notified(task_id, "notified_24h")
 
-        # --- 2h ---
+        # --- 2 часа ---
         if diff <= timedelta(hours=2) and t[7] == 0:
-            await bot.send_message(chat_id,
+            await bot.send_message(
+                chat_id,
                 f"🔥 2 часа до дедлайна\n{task_text}\n{executor}"
             )
             await mark_notified(task_id, "notified_2h")
@@ -197,8 +207,12 @@ async def check_tasks():
 
 async def main():
     await init_db()
+
     scheduler.add_job(check_tasks, "interval", minutes=1)
     scheduler.start()
+
+    print("🚀 Bot started")
+
     await dp.start_polling(bot)
 
 
