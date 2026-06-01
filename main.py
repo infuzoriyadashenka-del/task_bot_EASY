@@ -29,12 +29,72 @@ logging.basicConfig(level=logging.INFO)
 
 
 # =========================
-# BOT
+# BOT & DISPATCHER
 # =========================
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+
+# =========================
+# WEBHOOK LIFECYCLE
+# =========================
+
+async def on_startup(app: web.Application):
+    logging.info("Setting webhook...")
+
+    await bot.delete_webhook(drop_pending_updates=True)
+
+    await bot.set_webhook(
+        url=f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+    )
+
+    logging.info("Webhook set successfully")
+
+
+async def on_shutdown(app: web.Application):
+    logging.info("Shutting down bot...")
+    await bot.delete_webhook()
+
+
+# =========================
+# APP CREATION
+# =========================
+
+async def create_app():
+    logging.info("Starting bot...")
+
+    await init_db()
+
+    dp.include_router(router)
+
+    setup_scheduler(bot)
+
+    app = web.Application()
+
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+
+    SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot
+    ).register(app, path=WEBHOOK_PATH)
+
+    return app
+
+
+# =========================
+# ENTRY POINT
+# =========================
+
+if __name__ == "__main__":
+    app = asyncio.run(create_app())
+
+    web.run_app(
+        app,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 8080))
+    )
 
 # =========================
 # WEBHOOK LIFECYCLE
