@@ -19,12 +19,12 @@ if not BOT_TOKEN:
 
 logging.basicConfig(level=logging.INFO)
 
-
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
 async def main():
+
     logging.info("init db...")
     await init_db()
 
@@ -34,10 +34,10 @@ async def main():
     logging.info("scheduler...")
     setup_scheduler(bot)
 
-    logging.info("delete webhook...")
+    logging.info("start polling...")
+
     await bot.delete_webhook(drop_pending_updates=True)
 
-    logging.info("start polling...")
     await dp.start_polling(bot)
 
 
