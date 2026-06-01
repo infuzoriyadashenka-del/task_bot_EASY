@@ -9,7 +9,7 @@ async def init_db():
         CREATE TABLE IF NOT EXISTS tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id INTEGER,
-            text TEXT,
+            task_text TEXT,
             executor TEXT,
             deadline TEXT,
             status TEXT DEFAULT 'active',
@@ -20,34 +20,55 @@ async def init_db():
         await db.commit()
 
 
-async def add_task(chat_id, text, executor, deadline):
+async def add_task(chat_id, task_text, executor, deadline):
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("""
-        INSERT INTO tasks (chat_id, text, executor, deadline)
-        VALUES (?, ?, ?, ?)
-        """, (chat_id, text, executor, deadline))
+        await db.execute(
+            "INSERT INTO tasks (chat_id, task_text, executor, deadline) VALUES (?, ?, ?, ?)",
+            (chat_id, task_text, executor, deadline)
+        )
         await db.commit()
 
 
-async def get_active_tasks():
+async def get_last_tasks(chat_id, limit=1):
     async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("""
-        SELECT * FROM tasks WHERE status='active'
-        """)
+        cursor = await db.execute(
+            "SELECT * FROM tasks WHERE chat_id=? ORDER BY id DESC LIMIT ?",
+            (chat_id, limit)
+        )
         return await cursor.fetchall()
 
 
-async def update_status(task_id, status):
+async def get_task(task_id, chat_id):
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("""
-        UPDATE tasks SET status=? WHERE id=?
-        """, (status, task_id))
+        cursor = await db.execute(
+            "SELECT * FROM tasks WHERE id=? AND chat_id=?",
+            (task_id, chat_id)
+        )
+        return await cursor.fetchone()
+
+
+async def get_active_tasks(chat_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "SELECT * FROM tasks WHERE chat_id=? AND status='active'",
+            (chat_id,)
+        )
+        return await cursor.fetchall()
+
+
+async def update_task_status(task_id, status):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE tasks SET status=? WHERE id=?",
+            (status, task_id)
+        )
         await db.commit()
 
 
-async def mark(task_id, field):
+async def mark_notification(task_id, field):
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute(f"""
-        UPDATE tasks SET {field}=1 WHERE id=?
-        """, (task_id,))
+        await db.execute(
+            f"UPDATE tasks SET {field}=1 WHERE id=?",
+            (task_id,)
+        )
         await db.commit()
