@@ -1,86 +1,84 @@
-import re
-from datetime import datetime, timedelta
-
 from aiogram import Router, F
+from aiogram.filters import Command
 from aiogram.types import Message
+import re
+from datetime import datetime
 
-from database import add_task, get_active_tasks
+from database import (
+    add_task,
+    get_last_tasks,
+    get_task,
+    get_active_tasks,
+    update_task_status
+)
 
 router = Router()
 
 
-def now():
-    return datetime.utcnow() + timedelta(hours=3)
-
-
-def parse_deadline(text: str):
-    base = now()
-    text = text.lower()
-
-    if "завтра" in text:
-        return (base + timedelta(days=1)).strftime("%d.%m.%Y %H:%M")
-
-    if "послезавтра" in text:
-        return (base + timedelta(days=2)).strftime("%d.%m.%Y %H:%M")
-
-    match = re.search(r"через (\d+)", text)
-    if match:
-        return (base + timedelta(days=int(match.group(1)))).strftime("%d.%m.%Y %H:%M")
-
-    return None
-
-
-def parse_task(text):
+def parse_task(text: str):
     executor = re.search(r"@\w+", text)
+    date = re.search(r"\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}", text)
+
     executor = executor.group() if executor else "@unknown"
+    deadline = date.group() if date else None
 
-    deadline = parse_deadline(text)
+    clean = re.sub(r"@\w+", "", text)
+    clean = re.sub(r"\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}", "", clean)
 
-    clean = re.sub(r"@\w+", "", text).strip()
-
-    return clean, executor, deadline
+    return clean.strip(), executor, deadline
 
 
-# CREATE TASK (СУПЕР СТАБИЛЬНО)
-@router.message(F.text)
-async def create(message: Message):
+@router.message(F.text.startswith("задача:"))
+async def create_task(message: Message):
 
-    if message.text.startswith("/"):
-        return
+    text = message.text.replace("задача:", "").strip()
 
-    if "задача" not in message.text.lower():
-        return
-
-    text = message.text.lower().replace("задача", "").strip()
-
-    task, executor, deadline = parse_task(text)
+    task_text, executor, deadline = parse_task(text)
 
     if not deadline:
-        await message.answer("❌ не понял дедлайн")
+        await message.answer("❌ Укажи дату dd.mm.yyyy hh:mm")
         return
 
-    await add_task(message.chat.id, task, executor, deadline)
+    await add_task(message.chat.id, task_text, executor, deadline)
 
-    await message.answer(
-        f"✅ задача создана\n"
-        f"{executor}\n"
-        f"{task}\n"
-        f"{deadline}"
-    )
+    last = await get_last_tasks(message.chat.id, 1)
+
+    await message.answer(f"✅ задача #{last[0][0]} добавлена")
 
 
-@router.message(F.text.startswith("/tasks"))
+@router.message(Command("tasks"))
 async def tasks(message: Message):
 
-    tasks = await get_active_tasks()
+    rows = await get_active_tasks(message.chat.id)
 
-    if not tasks:
-        await message.answer("пусто")
+    if not rows:
+        await message.answer("📭 пусто")
         return
 
     msg = "📌 задачи:\n\n"
-
-    for t in tasks:
-        msg += f"#{t[0]} {t[2]} ({t[3]}) — {t[4]}\n"
+    for r in rows:
+        msg += f"#{r[0]} {r[2]} {r[3]} {r[4]}\n"
 
     await message.answer(msg)
+
+
+@router.message(Command("done"))
+async def done(message: Message):
+
+    task_id = int(message.text.split()[1])
+    await update_task_status(task_id, "done")
+
+    await message.answer("✅ done")
+
+
+@router.message(F.text.regexp(r"задача\s+\d+"))
+async def info(message: Message):
+
+    task_id = int(re.findall(r"\d+", message.text)[0])
+    task = await get_task(task_id, message.chat.id)
+
+    if not task:
+        await message.answer("❌ нет")
+        return
+
+    await message.answer(f"#{task[0]} {task[2]} {task[3]} {task[4]} {task[5]}")
