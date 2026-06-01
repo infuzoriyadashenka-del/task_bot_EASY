@@ -16,15 +16,16 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN is missing")
 
-
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
-async def main():
-
+async def startup():
     logging.info("init db...")
     await init_db()
 
@@ -34,9 +35,14 @@ async def main():
     logging.info("scheduler...")
     setup_scheduler(bot)
 
-    logging.info("start polling...")
 
+async def main():
+    await startup()
+
+    # 🔥 ОБЯЗАТЕЛЬНО убираем старые апдейты
     await bot.delete_webhook(drop_pending_updates=True)
+
+    logging.info("start polling...")
 
     await dp.start_polling(bot)
 
