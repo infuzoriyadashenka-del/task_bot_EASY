@@ -3,8 +3,13 @@ import aiosqlite
 DB_NAME = "tasks.db"
 
 
+# =========================
+# INIT DB
+# =========================
+
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
+
         await db.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -18,8 +23,53 @@ async def init_db():
             last_overdue_notice TEXT
         )
         """)
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS participants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            username TEXT
+        )
+        """)
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS penalties (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            executor TEXT,
+            points INTEGER DEFAULT 0
+        )
+        """)
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS streaks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            executor TEXT,
+            streak INTEGER DEFAULT 0,
+            max_streak INTEGER DEFAULT 0
+        )
+        """)
+
         await db.commit()
 
+
+# =========================
+# PARTICIPANTS
+# =========================
+
+async def add_participant(chat_id, username):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO participants (chat_id, username) VALUES (?, ?)",
+            (chat_id, username)
+        )
+        await db.commit()
+
+
+# =========================
+# TASKS
+# =========================
 
 async def add_task(chat_id, task_text, executor, deadline):
     async with aiosqlite.connect(DB_NAME) as db:
@@ -32,29 +82,37 @@ async def add_task(chat_id, task_text, executor, deadline):
 
 async def get_task(task_id, chat_id):
     async with aiosqlite.connect(DB_NAME) as db:
-        cur = await db.execute(
+        cursor = await db.execute(
             "SELECT * FROM tasks WHERE id=? AND chat_id=?",
             (task_id, chat_id)
         )
-        return await cur.fetchone()
+        return await cursor.fetchone()
 
 
 async def get_active_tasks(chat_id):
     async with aiosqlite.connect(DB_NAME) as db:
-        cur = await db.execute(
+        cursor = await db.execute(
             "SELECT * FROM tasks WHERE chat_id=? AND status IN ('active','expired')",
             (chat_id,)
         )
-        return await cur.fetchall()
+        return await cursor.fetchall()
+
+
+async def get_all_tasks():
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "SELECT * FROM tasks WHERE status IN ('active','expired')"
+        )
+        return await cursor.fetchall()
 
 
 async def get_last_tasks(chat_id, limit=10):
     async with aiosqlite.connect(DB_NAME) as db:
-        cur = await db.execute(
+        cursor = await db.execute(
             "SELECT * FROM tasks WHERE chat_id=? ORDER BY id DESC LIMIT ?",
             (chat_id, limit)
         )
-        return await cur.fetchall()
+        return await cursor.fetchall()
 
 
 async def update_task_status(task_id, status):
@@ -75,28 +133,51 @@ async def update_deadline(task_id, deadline):
         await db.commit()
 
 
+# =========================
+# NOTIFICATIONS
+# =========================
+
+async def mark_notification(task_id, field):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            f"UPDATE tasks SET {field}=1 WHERE id=?",
+            (task_id,)
+        )
+        await db.commit()
+
+
+# =========================
+# STATS
+# =========================
+
 async def get_stats(chat_id):
     async with aiosqlite.connect(DB_NAME) as db:
-        cur = await db.execute(
+        cursor = await db.execute(
             "SELECT executor, status, COUNT(*) FROM tasks WHERE chat_id=? GROUP BY executor, status",
             (chat_id,)
         )
-        return await cur.fetchall()
+        return await cursor.fetchall()
 
 
 async def get_rating(chat_id):
     async with aiosqlite.connect(DB_NAME) as db:
-        cur = await db.execute(
-            "SELECT executor, COUNT(*) FROM tasks WHERE chat_id=? AND status='done' GROUP BY executor",
+        cursor = await db.execute(
+            """
+            SELECT executor, COUNT(*) as score
+            FROM tasks
+            WHERE chat_id=? AND status='done'
+            GROUP BY executor
+            ORDER BY score DESC
+            """,
             (chat_id,)
         )
-        return await cur.fetchall()
+        return await cursor.fetchall()
 
 
 async def get_streak(chat_id, executor):
     async with aiosqlite.connect(DB_NAME) as db:
-        cur = await db.execute(
+        cursor = await db.execute(
             "SELECT streak, max_streak FROM streaks WHERE chat_id=? AND executor=?",
             (chat_id, executor)
         )
-        return await cur.fetchone()
+        return await cursor.fetchone()
