@@ -38,5 +38,12 @@ async def check_tasks(bot):
 
 
 def setup_scheduler(bot):
-    scheduler.add_job(check_tasks, "interval", minutes=1, args=[bot])
+    scheduler.add_job(
+        check_tasks,
+        "interval",
+        minutes=1,
+        args=[bot],
+        max_instances=1,
+        coalesce=True
+    )
     scheduler.start()
