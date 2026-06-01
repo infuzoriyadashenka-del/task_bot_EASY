@@ -19,6 +19,8 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+print("BOT_TOKEN =", BOT_TOKEN)
+
 if not BOT_TOKEN:
 raise ValueError("BOT_TOKEN is missing")
 
@@ -80,9 +82,14 @@ await startup()
 
 logging.info("Removing webhook...")
 
-await bot.delete_webhook(
-    drop_pending_updates=True
-)
+try:
+    await bot.delete_webhook(
+        drop_pending_updates=True
+    )
+except Exception as e:
+    logging.warning(
+        f"Webhook cleanup skipped: {e}"
+    )
 
 logging.info("Start polling...")
 
@@ -105,7 +112,17 @@ try:
 
     asyncio.run(main())
 
-except (KeyboardInterrupt, SystemExit):
+except KeyboardInterrupt:
+
+    logging.info("Bot stopped by keyboard")
+
+except SystemExit:
 
     logging.info("Bot stopped")
+
+except Exception as e:
+
+    logging.exception(
+        f"Fatal error: {e}"
+    )
 ```
