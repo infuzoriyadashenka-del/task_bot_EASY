@@ -1,5 +1,5 @@
-aiogram
-aiohttp
-python-dotenv
-apscheduler
-aiosqlite
+aiogram==3.13.1
+aiohttp==3.10.5
+python-dotenv==1.0.1
+apscheduler==3.10.4
+aiosqlite==0.20.0
