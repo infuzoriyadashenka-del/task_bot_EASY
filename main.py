@@ -16,12 +16,10 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN is missing")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
 
-bot = Bot(token=BOT_TOKEN)
+logging.basicConfig(level=logging.INFO)
+
+bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
 
@@ -39,12 +37,21 @@ async def startup():
 async def main():
     await startup()
 
-    # 🔥 ОБЯЗАТЕЛЬНО убираем старые апдейты
+    # 🔥 ВАЖНЕЙШИЙ ФИКС
     await bot.delete_webhook(drop_pending_updates=True)
+
+    # 🔥 защита от конфликта Telegram (самый важный фикс)
+    try:
+        await bot.get_updates(offset=-1)
+    except:
+        pass
 
     logging.info("start polling...")
 
-    await dp.start_polling(bot)
+    await dp.start_polling(
+        bot,
+        allowed_updates=["message"]
+    )
 
 
 if __name__ == "__main__":
