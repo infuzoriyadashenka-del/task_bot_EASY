@@ -24,6 +24,10 @@ router = Router()
 UTC_OFFSET = 3
 
 
+# =========================
+# TIME
+# =========================
+
 def now():
     return datetime.utcnow() + timedelta(hours=UTC_OFFSET)
 
@@ -45,19 +49,18 @@ async def save_user(message: Message):
 # =========================
 
 def parse_human_date(text: str):
-
     base = now()
     text = text.lower()
 
     if "завтра" in text:
-        return (base + timedelta(days=1)).strftime("%d.%m.%Y 10:00")
+        return (base + timedelta(days=1)).strftime("%d.%m.%Y %H:%M")
 
     if "послезавтра" in text:
-        return (base + timedelta(days=2)).strftime("%d.%m.%Y 10:00")
+        return (base + timedelta(days=2)).strftime("%d.%m.%Y %H:%M")
 
     match = re.search(r"через (\d+) (день|дня|дней)", text)
     if match:
-        return (base + timedelta(days=int(match.group(1)))).strftime("%d.%m.%Y 10:00")
+        return (base + timedelta(days=int(match.group(1)))).strftime("%d.%m.%Y %H:%M")
 
     weekdays = {
         "понедельник": 0,
@@ -73,10 +76,14 @@ def parse_human_date(text: str):
         if k in text:
             delta = (v - base.weekday() + 7) % 7
             delta = 7 if delta == 0 else delta
-            return (base + timedelta(days=delta)).strftime("%d.%m.%Y 10:00")
+            return (base + timedelta(days=delta)).strftime("%d.%m.%Y %H:%M")
 
     return None
 
+
+# =========================
+# PARSE TASK
+# =========================
 
 def parse_task(text: str):
 
@@ -93,7 +100,7 @@ def parse_task(text: str):
 
 
 # =========================
-# CREATE TASK
+# CREATE TASK (ВАЖНО: НЕ ПЕРЕХВАТЫВАЕТ ВСЁ)
 # =========================
 
 @router.message()
@@ -102,19 +109,26 @@ async def create_task(message: Message):
     if not message.text:
         return
 
-    await save_user(message)
-
     text = message.text.lower()
 
-    # ignore commands
+    # ❌ игнор команд
     if text.startswith("/"):
         return
 
-    if text in ["задачи", "рейтинг", "статистика", "аналитика"]:
+    # ❌ НЕ перехватываем другие функции
+    if text.startswith("задачи") or text in ["рейтинг", "статистика", "аналитика"]:
         return
 
-    if "@" not in text and "завтра" not in text and "через" not in text:
+    if "сколько осталось" in text or "задача" in text:
         return
+
+    # ❌ если нет признаков задачи — выходим
+    if not any(x in text for x in ["@", "завтра", "через", "понедельник",
+                                  "вторник", "среду", "четверг",
+                                  "пятницу", "субботу", "воскресенье"]):
+        return
+
+    await save_user(message)
 
     task_text, executor, deadline = parse_task(message.text)
 
@@ -124,8 +138,8 @@ async def create_task(message: Message):
 
     await add_task(message.chat.id, task_text, executor, deadline)
 
-    tasks = await get_last_tasks(message.chat.id, 1)
-    task_id = tasks[0][0] if tasks else "?"
+    last = await get_last_tasks(message.chat.id, 1)
+    task_id = last[0][0] if last else "?"
 
     await message.answer(
         f"✅ Задача #{task_id}\n\n"
@@ -157,14 +171,13 @@ async def list_tasks(message: Message):
 
 
 # =========================
-# SINGLE TASK
+# SINGLE TASK INFO
 # =========================
 
 @router.message(lambda m: m.text and "задача" in m.text.lower())
 async def get_task_info(message: Message):
 
     nums = re.findall(r"\d+", message.text)
-
     if not nums:
         return
 
@@ -198,26 +211,36 @@ async def get_task_info(message: Message):
 
 
 # =========================
-# DONE / CANCEL
+# DONE
 # =========================
 
 @router.message(Command("done"))
 async def done_task(message: Message):
 
-    task_id = int(message.text.split()[1])
+    try:
+        task_id = int(message.text.split()[1])
+    except:
+        await message.answer("❌ Формат: /done 1")
+        return
 
     await update_task_status(task_id, "done")
-
     await message.answer("✅ Выполнено")
 
+
+# =========================
+# CANCEL
+# =========================
 
 @router.message(Command("cancel"))
 async def cancel_task(message: Message):
 
-    task_id = int(message.text.split()[1])
+    try:
+        task_id = int(message.text.split()[1])
+    except:
+        await message.answer("❌ Формат: /cancel 1")
+        return
 
     await update_task_status(task_id, "cancelled")
-
     await message.answer("❌ Отменено")
 
 
@@ -229,6 +252,10 @@ async def cancel_task(message: Message):
 async def change_deadline(message: Message):
 
     parts = message.text.split(maxsplit=2)
+
+    if len(parts) < 3:
+        await message.answer("❌ Формат: /deadline 1 завтра")
+        return
 
     task_id = int(parts[1])
     new_deadline = parts[2]
@@ -243,7 +270,6 @@ async def change_deadline(message: Message):
         return
 
     await update_deadline(task_id, deadline)
-
     await message.answer(f"⏰ Обновлено #{task_id}")
 
 
@@ -255,7 +281,6 @@ async def change_deadline(message: Message):
 async def time_left(message: Message):
 
     nums = re.findall(r"\d+", message.text)
-
     if not nums:
         return
 
@@ -285,7 +310,6 @@ async def stats(message: Message):
     msg = "📊 Статистика:\n\n"
 
     for user, status, count in rows:
-
         msg += f"{user} — {status}: {count}\n"
 
     await message.answer(msg)
@@ -313,7 +337,7 @@ async def rating(message: Message):
 
 
 # =========================
-# ANALYTICS (streak)
+# ANALYTICS
 # =========================
 
 @router.message(lambda m: m.text and m.text.lower() == "аналитика")
