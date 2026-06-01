@@ -105,10 +105,7 @@ try:
 
     asyncio.run(main())
 
-except (
-    KeyboardInterrupt,
-    SystemExit
-):
+except (KeyboardInterrupt, SystemExit):
 
     logging.info("Bot stopped")
 ```
