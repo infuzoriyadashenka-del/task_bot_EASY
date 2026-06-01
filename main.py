@@ -6,11 +6,10 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 from dotenv import load_dotenv
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from handlers import router
 from database import init_db
-from scheduler import check_tasks, morning_message
+from scheduler import setup_scheduler
 
 load_dotenv()
 
@@ -26,15 +25,77 @@ if not WEBHOOK_URL:
 
 WEBHOOK_PATH = "/webhook"
 
-# ---------------- LOGGING ----------------
-
 logging.basicConfig(level=logging.INFO)
 
-# ---------------- BOT ----------------
+
+# =========================
+# BOT
+# =========================
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-scheduler = AsyncIOScheduler()
+
+
+# =========================
+# WEBHOOK LIFECYCLE
+# =========================
+
+async def on_startup(app: web.Application):
+    logging.info("Setting webhook...")
+
+    await bot.delete_webhook(drop_pending_updates=True)
+
+    await bot.set_webhook(
+        url=f"{WEBHOOK_URL}{WEBHOOK_PATH}"
+    )
+
+    logging.info("Webhook set successfully")
+
+
+async def on_shutdown(app: web.Application):
+    logging.info("Shutting down bot...")
+    await bot.delete_webhook()
+
+
+# =========================
+# APP SETUP
+# =========================
+
+async def create_app():
+    logging.info("Starting bot...")
+
+    await init_db()
+
+    dp.include_router(router)
+
+    # ⚠️ ВАЖНО: scheduler теперь отдельной функцией
+    setup_scheduler(bot)
+
+    app = web.Application()
+
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+
+    SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot
+    ).register(app, path=WEBHOOK_PATH)
+
+    return app
+
+
+# =========================
+# ENTRY POINT
+# =========================
+
+if __name__ == "__main__":
+    app = asyncio.run(create_app())
+
+    web.run_app(
+        app,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 8080))
+    )scheduler = AsyncIOScheduler()
 
 
 # ---------------- WEBHOOK ----------------
