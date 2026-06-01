@@ -1,7 +1,7 @@
 import re
 from datetime import datetime, timedelta
 
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message
 
@@ -61,31 +61,14 @@ def parse_human_date(text: str):
     if match:
         return (base + timedelta(days=int(match.group(1)))).strftime("%d.%m.%Y %H:%M")
 
-    weekdays = {
-        "понедельник": 0,
-        "вторник": 1,
-        "среду": 2,
-        "четверг": 3,
-        "пятницу": 4,
-        "субботу": 5,
-        "воскресенье": 6
-    }
-
-    for k, v in weekdays.items():
-        if k in text:
-            delta = (v - base.weekday() + 7) % 7
-            delta = 7 if delta == 0 else delta
-            return (base + timedelta(days=delta)).strftime("%d.%m.%Y %H:%M")
-
     return None
 
 
 # =========================
-# PARSE TASK
+# PARSE TASK (НО БЕЗ ПЕРЕХВАТА ВСЕГО)
 # =========================
 
 def parse_task(text: str):
-
     executor = re.search(r"@\w+", text)
     date = re.search(r"\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}", text)
 
@@ -99,36 +82,17 @@ def parse_task(text: str):
 
 
 # =========================
-# CREATE TASK
+# CREATE TASK (ТОЛЬКО ПО ЯВНОМУ ТРИГГЕРУ)
 # =========================
 
-@router.message()
+@router.message(F.text.startswith("задача:"))
 async def create_task(message: Message):
-
-    if not message.text:
-        return
-
-    text = message.text.lower()
-
-    # ❌ игнор команд
-    if text.startswith("/"):
-        return
-
-    # ❌ не задача
-    if text in ["задачи", "рейтинг", "статистика", "аналитика"]:
-        return
-
-    if "сколько осталось" in text or "задача" in text:
-        return
-
-    if not any(x in text for x in ["@", "завтра", "через", "понедельник",
-                                  "вторник", "среду", "четверг",
-                                  "пятницу", "субботу", "воскресенье"]):
-        return
 
     await save_user(message)
 
-    task_text, executor, deadline = parse_task(message.text)
+    text = message.text.replace("задача:", "").strip()
+
+    task_text, executor, deadline = parse_task(text)
 
     if not deadline:
         await message.answer("❌ Не понял дедлайн")
@@ -148,11 +112,10 @@ async def create_task(message: Message):
 
 
 # =========================
-# TASK LIST
+# TASKS LIST
 # =========================
 
 @router.message(Command("tasks"))
-@router.message(lambda m: m.text and m.text.lower().startswith("задачи"))
 async def list_tasks(message: Message):
 
     tasks = await get_active_tasks(message.chat.id)
@@ -173,7 +136,7 @@ async def list_tasks(message: Message):
 # TASK INFO
 # =========================
 
-@router.message(lambda m: m.text and "задача" in m.text.lower())
+@router.message(F.text.regexp(r"задача\s+\d+"))
 async def task_info(message: Message):
 
     nums = re.findall(r"\d+", message.text)
@@ -210,7 +173,7 @@ async def task_info(message: Message):
 
 
 # =========================
-# DONE
+# COMMANDS SAFE
 # =========================
 
 @router.message(Command("done"))
@@ -226,10 +189,6 @@ async def done_task(message: Message):
     await message.answer("✅ Выполнено")
 
 
-# =========================
-# CANCEL
-# =========================
-
 @router.message(Command("cancel"))
 async def cancel_task(message: Message):
 
@@ -242,10 +201,6 @@ async def cancel_task(message: Message):
     await update_task_status(task_id, "cancelled")
     await message.answer("❌ Отменено")
 
-
-# =========================
-# DEADLINE CHANGE
-# =========================
 
 @router.message(Command("deadline"))
 async def change_deadline(message: Message):
@@ -273,36 +228,10 @@ async def change_deadline(message: Message):
 
 
 # =========================
-# TIME LEFT
-# =========================
-
-@router.message(lambda m: m.text and "сколько осталось" in m.text.lower())
-async def time_left(message: Message):
-
-    nums = re.findall(r"\d+", message.text)
-    if not nums:
-        return
-
-    task_id = int(nums[0])
-
-    task = await get_task(task_id, message.chat.id)
-
-    if not task:
-        await message.answer("❌ Нет задачи")
-        return
-
-    deadline = datetime.strptime(task[4], "%d.%m.%Y %H:%M")
-    diff = deadline - now()
-
-    await message.answer(f"⏳ Осталось {int(diff.total_seconds() // 3600)} часов")
-
-
-# =========================
-# STATS
+# STATS / RATING / ANALYTICS
 # =========================
 
 @router.message(Command("stats"))
-@router.message(lambda m: m.text and m.text.lower() == "статистика")
 async def stats(message: Message):
 
     rows = await get_stats(message.chat.id)
@@ -315,12 +244,7 @@ async def stats(message: Message):
     await message.answer(msg)
 
 
-# =========================
-# RATING
-# =========================
-
 @router.message(Command("rating"))
-@router.message(lambda m: m.text and m.text.lower() == "рейтинг")
 async def rating(message: Message):
 
     rows = await get_rating(message.chat.id)
@@ -337,12 +261,7 @@ async def rating(message: Message):
     await message.answer(msg)
 
 
-# =========================
-# ANALYTICS
-# =========================
-
 @router.message(Command("analytics"))
-@router.message(lambda m: m.text and m.text.lower() == "аналитика")
 async def analytics(message: Message):
 
     stats = await get_stats(message.chat.id)
