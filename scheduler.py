@@ -1,14 +1,11 @@
-from datetime import datetime, timedelta
-import random
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import asyncio
 
-from database import (
-    get_all_tasks,
-    mark_notification,
-    update_task_status,
-    update_last_overdue_notice,
-    add_penalty,
-    update_streak
-)
+from database import get_all_tasks, mark_notification, update_task_status
+from datetime import datetime, timedelta
+
+
+scheduler = AsyncIOScheduler()
 
 UTC_OFFSET = 3
 
@@ -18,117 +15,58 @@ def now():
 
 
 # =========================
-# TASK CHECKER
+# CHECK TASKS
 # =========================
 
 async def check_tasks(bot):
 
-    tasks = await get_all_tasks()
-    current_time = now()
+    # защита от параллельных запусков
+    if getattr(check_tasks, "running", False):
+        return
 
-    for task in tasks:
+    check_tasks.running = True
 
-        task_id = task[0]
-        chat_id = task[1]
-        task_text = task[2]
-        executor = task[3]
-        deadline_str = task[4]
-        status = task[5]
-        notified_24h = task[6]
-        notified_2h = task[7]
-        last_notice = task[8]
+    try:
+        tasks = await get_all_tasks()
+        current_time = now()
 
-        try:
-            deadline = datetime.strptime(deadline_str, "%d.%m.%Y %H:%M")
-        except:
-            continue
+        for task in tasks:
 
-        diff = deadline - current_time
+            task_id, chat_id, text, executor, deadline_str, status, n24, n2 = task
 
-        # =========================
-        # 24 HOURS WARNING
-        # =========================
-        if (
-            status == "active"
-            and diff <= timedelta(hours=24)
-            and diff > timedelta(hours=2)
-            and notified_24h == 0
-        ):
-            await bot.send_message(
-                chat_id,
-                f"⏰ Осталось 24 часа\n\n"
-                f"👤 {executor}\n"
-                f"📌 {task_text}"
-            )
+            try:
+                deadline = datetime.strptime(deadline_str, "%d.%m.%Y %H:%M")
+            except:
+                continue
 
-            await mark_notification(task_id, "notified_24h")
+            diff = deadline - current_time
 
-        # =========================
-        # 2 HOURS WARNING
-        # =========================
-        if (
-            status == "active"
-            and diff <= timedelta(hours=2)
-            and diff > timedelta(minutes=0)
-            and notified_2h == 0
-        ):
-            await bot.send_message(
-                chat_id,
-                f"🔥 Осталось 2 часа\n\n"
-                f"👤 {executor}\n"
-                f"📌 {task_text}"
-            )
+            # expired
+            if diff.total_seconds() <= 0:
 
-            await mark_notification(task_id, "notified_2h")
+                if status == "active":
+                    await update_task_status(task_id, "expired")
 
-        # =========================
-        # EXPIRED TASK LOGIC
-        # =========================
-        if diff.total_seconds() <= 0:
+                continue
 
-            # перевести в expired
-            if status == "active":
-                await update_task_status(task_id, "expired")
-
-                # ❌ ШТРАФ -1
-                await add_penalty(chat_id, executor, -1)
-
-                # 🔥 СБРОС streak
-                await update_streak(chat_id, executor, 0, reset=True)
-
-            overdue = abs(diff)
-            days = overdue.days
-            hours = overdue.seconds // 3600
-
-            send_notice = False
-
-            # анти-спам (раз в 30 минут)
-            if not last_notice:
-                send_notice = True
-            else:
-                try:
-                    last_dt = datetime.strptime(last_notice, "%d.%m.%Y %H:%M")
-
-                    if (current_time - last_dt) >= timedelta(minutes=30):
-                        send_notice = True
-
-                except:
-                    send_notice = True
-
-            if send_notice:
-
+            # 24h notification
+            if diff <= timedelta(hours=24) and n24 == 0:
                 await bot.send_message(
                     chat_id,
-                    f"⚠️ ПРОСРОЧКА\n\n"
-                    f"👤 {executor}\n"
-                    f"📌 {task_text}\n\n"
-                    f"⏱ Просрочено: {days} дн. {hours} ч."
+                    f"⏰ 24 часа до дедлайна\n\n{text}"
                 )
+                await mark_notification(task_id, "notified_24h")
 
-                await update_last_overdue_notice(
-                    task_id,
-                    current_time.strftime("%d.%m.%Y %H:%M")
+            # 2h notification
+            if diff <= timedelta(hours=2) and n2 == 0:
+                await bot.send_message(
+                    chat_id,
+                    f"🔥 2 часа до дедлайна\n\n{text}"
                 )
+                await mark_notification(task_id, "notified_2h")
+
+    finally:
+        check_tasks.running = False
 
 
 # =========================
@@ -137,23 +75,44 @@ async def check_tasks(bot):
 
 async def morning_message(bot):
 
+    import random
+
     names = ["Василиса", "Вася", "Даша", "Лизочек"]
 
-    poop = random.choice(names)
-    beauty = random.choice(names)
-
-    chats = set()
+    name = random.choice(names)
 
     tasks = await get_all_tasks()
-
-    for t in tasks:
-        chats.add(t[1])
+    chats = set(t[1] for t in tasks)
 
     for chat_id in chats:
-
         await bot.send_message(
             chat_id,
-            "☀️ Доброе утро!\n\n"
-            f"💩 Какашка дня — {poop}\n"
-            f"💄 Красотка дня — {beauty}"
+            f"☀️ Доброе утро!\n\n💩 Какашка дня — {name}"
         )
+
+
+# =========================
+# SETUP
+# =========================
+
+def setup_scheduler(bot):
+
+    scheduler.add_job(
+        check_tasks,
+        "interval",
+        minutes=1,
+        args=[bot],
+        max_instances=1,
+        coalesce=True
+    )
+
+    scheduler.add_job(
+        morning_message,
+        "cron",
+        hour=7,
+        minute=30,
+        args=[bot],
+        max_instances=1
+    )
+
+    scheduler.start()
