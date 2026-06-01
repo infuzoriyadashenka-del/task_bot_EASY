@@ -3,6 +3,8 @@ import logging
 import os
 
 from aiogram import Bot, Dispatcher
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -13,28 +15,71 @@ from database import init_db
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN is not set in environment variables")
-
-# ---------------- LOGGING ----------------
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
-
-# ---------------- BOT ----------------
+WEBHOOK_PATH = "/webhook"
+BASE_WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Railway URL
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 scheduler = AsyncIOScheduler()
 
+logging.basicConfig(level=logging.INFO)
 
-# ---------------- STARTUP CLEANUP ----------------
+
+# ---------------- STARTUP ----------------
 
 async def on_startup():
-    """
+    logging.info("Setting webhook...")
+
+    await bot.delete_webhook(drop_pending_updates=True)
+
+    await bot.set_webhook(
+        url=f"{BASE_WEBHOOK_URL}{WEBHOOK_PATH}"
+    )
+
+    logging.info("Webhook set successfully")
+
+
+# ---------------- SCHEDULER ----------------
+
+def setup_scheduler():
+    scheduler.add_job(check_tasks, "interval", minutes=1, args=[bot])
+    scheduler.add_job(morning_message, "cron", hour=7, minute=30, args=[bot])
+    scheduler.start()
+
+
+# ---------------- APP ----------------
+
+async def main():
+    await init_db()
+
+    dp.include_router(router)
+
+    setup_scheduler()
+
+    await on_startup()
+
+    app = web.Application()
+
+    SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot
+    ).register(app, path=WEBHOOK_PATH)
+
+    setup_application(app, dp, bot=bot)
+
+    logging.info("🚀 Webhook bot started")
+
+    return app
+
+
+# ---------------- RUN ----------------
+
+if __name__ == "__main__":
+    web.run_app(
+        asyncio.run(main()),
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 8080))
+    )    """
     ВАЖНО:
     Убирает webhook и старые pending updates,
     чтобы убрать TelegramConflictError
