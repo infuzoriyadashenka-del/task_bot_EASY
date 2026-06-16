@@ -26,12 +26,12 @@ async def check_tasks(bot):
             continue
 
         if diff <= timedelta(hours=24) and n24 == 0:
-            mention = f"@{executor}" if executor else ""
+            mention = executor if executor else ""
             await bot.send_message(chat_id, f"⏰ До дедлайна 24 часа!\n{text}\n{mention}")
             await mark_notification(task_id, "notified_24h")
 
         if diff <= timedelta(hours=2) and n2 == 0:
-            mention = f"@{executor}" if executor else ""
+            mention = executor if executor else ""
             await bot.send_message(chat_id, f"🔥 До дедлайна 2 часа!\n{text}\n{mention}")
             await mark_notification(task_id, "notified_2h")
 
